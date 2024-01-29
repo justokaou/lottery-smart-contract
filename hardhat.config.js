@@ -6,7 +6,7 @@ const pk = process.env.pk
 
 /** @type import('hardhat/config').HardhatUserConfig */
 module.exports = {
-    solidity: "0.8.0",
+    solidity: "0.8.4",
     networks: {
         mumbai: {
             url: `https://polygon-mumbai-bor.publicnode.com`,
@@ -14,7 +14,7 @@ module.exports = {
         }
     },
     etherscan: {
-        apiKey: process.env.scap-api
+        apiKey: process.env.scanApi
     }
 
 };

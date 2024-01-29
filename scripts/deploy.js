@@ -10,7 +10,7 @@ async function main() {
     console.log("Deploying contracts with the account:", deployer.address);
 
     const Lottery = await ethers.getContractFactory("lottery");
-    const deployLottery = await Lottery.deploy();
+    const deployLottery = await Lottery.deploy(7025);
 
     console.log("Lottery address:", deployLottery.target);
 }

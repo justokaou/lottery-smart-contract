@@ -1,14 +1,35 @@
 //SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.4;
 
-contract lottery {
-    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+import "@chainlink/contracts/src/v0.8/interfaces/VRFCoordinatorV2Interface.sol";
+import "@chainlink/contracts/src/v0.8/vrf/VRFConsumerBaseV2.sol";
+import "@chainlink/contracts/src/v0.8/shared/access/ConfirmedOwner.sol";
+
+contract lottery is VRFConsumerBaseV2, ConfirmedOwner {
     event NewParticipant(address indexed newParticipant, bool isNewParticipant);
     event Winner(address indexed winnerAddress, bool isWinner);
     event Paused(address account);
     event Unpaused(address account);
+    event RandomNumberRequested(uint256 requestId);
+    event RandomNumberFulfilled(uint256 randomNumber);
 
-    address public owner;
+
+    struct RequestStatus {
+        bool fulfilled;
+        uint256 randomNumber;
+    }
+
+    VRFCoordinatorV2Interface COORDINATOR;
+    bytes32 internal keyHash;
+    uint256 internal fee;
+    uint256 public randomResult;
+    uint32 callbackGasLimit = 2500000;
+    uint32 numNumber = 1;
+    uint16 requestConfirmations = 3;
+    uint64 s_subscriptionId;
+    mapping(uint256 => RequestStatus) public s_requests;
+
+    address payable public ownerPayable;
     uint256 public lotteryId = 0;
     mapping(address => mapping(uint256 => bool)) public hasParticipatedThisRound;
     mapping(uint256 => address) public indexToParticipant;
@@ -17,13 +38,18 @@ contract lottery {
     bool public paused = false;
     bool private locked;
 
-    constructor() {
-        owner = msg.sender; // Le créateur du contrat est le propriétaire
-    }
-
-    modifier onlyOwner() {
-        require(msg.sender == owner, "Caller is not the owner");
-        _;
+    constructor(uint64 subscriptionId) 
+        VRFConsumerBaseV2(0x7a1BaC17Ccc5b313516C5E16fb24f7659aA5ebed)
+        ConfirmedOwner(msg.sender)
+    {
+        COORDINATOR = VRFCoordinatorV2Interface(
+            0x7a1BaC17Ccc5b313516C5E16fb24f7659aA5ebed // VRF Coordinator for Mumbai
+        );
+        ownerPayable = payable(msg.sender);
+        keyHash = 0x4b09e658ed251bcafeebbc69400383d49f344ace09b9576fe248bb02c003fe9f;
+        fee = 0.0005 * 10 ** 18; // Fee for Mumbai
+        s_subscriptionId = subscriptionId; // define subscription id
+        COORDINATOR = VRFCoordinatorV2Interface(0x7a1BaC17Ccc5b313516C5E16fb24f7659aA5ebed);
     }
 
     modifier whenNotPaused() {
@@ -48,13 +74,6 @@ contract lottery {
         _;
     }
 
-
-    function transferOwnership(address newOwner) public onlyOwner {
-        require(newOwner != address(0), "New owner cannot be the zero address");
-        emit OwnershipTransferred(owner, newOwner);
-        owner = newOwner;
-    }
-
     function pause() public onlyOwner {
         paused = true;
         emit Paused(msg.sender);
@@ -76,25 +95,50 @@ contract lottery {
         participantCount++;
     }
 
-    function selectWinner() public onlyOwner hasParticipants hasEnoughBalance noReentrancy {
-        uint256 randomIndex = uint(keccak256(abi.encodePacked(block.timestamp, msg.sender))) % participantCount;
+    // request random number to chainlink VRF
+    function requestRandomNumber() internal {
+        uint256 requestId = COORDINATOR.requestRandomWords(
+            keyHash, 
+            s_subscriptionId, 
+            requestConfirmations, // request confirmations
+            callbackGasLimit, // callback gas limit
+            numNumber // number of random numbers
+        );
+        emit RandomNumberRequested(uint256(requestId));
+    }
 
+
+    function selectWinner() public onlyOwner hasParticipants hasEnoughBalance noReentrancy {
+        requestRandomNumber();
+    }
+
+    // callback function call by chainlink to give here the random number
+    function fulfillRandomWords(uint256, uint256[] memory randomWords) internal override {
+        randomResult = randomWords[0];
+        emit RandomNumberFulfilled(randomResult);
+        processWinner(randomResult);
+    }
+
+    function processWinner(uint256 randomness) internal {
+        // Use randomness to determine the winner
+        uint256 randomIndex = randomness % participantCount;
         address winnerAddress = indexToParticipant[randomIndex];
 
+        // transfer rewards
         uint256 ownerShare = address(this).balance * 5 / 100;
-
-        (bool sentOwner, ) = payable(owner).call{value: ownerShare}("");
+        (bool sentOwner, ) = ownerPayable.call{value: ownerShare}("");
         require(sentOwner, "Failed to send Ether to owner");
 
-        // Calculer le reste pour le gagnant
-        uint256 winnerReward = address(this).balance; // La balance restante après le transfert à l'owner
+        uint256 winnerReward = address(this).balance;
         (bool sentWinner, ) = payable(winnerAddress).call{value: winnerReward}("");
         require(sentWinner, "Failed to send Ether to winner");
 
         lastWinner = winnerAddress;
         emit Winner(winnerAddress, true);
 
+        // reset for next lottery
         lotteryId++;
         participantCount = 0;
     }
+
 }
