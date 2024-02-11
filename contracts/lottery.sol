@@ -1,11 +1,10 @@
 //SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.4;
 
-import "@chainlink/contracts/src/v0.8/interfaces/VRFCoordinatorV2Interface.sol";
-import "@chainlink/contracts/src/v0.8/vrf/VRFConsumerBaseV2.sol";
+import "@chainlink/contracts/src/v0.8/vrf/VRFV2WrapperConsumerBase.sol";
 import "@chainlink/contracts/src/v0.8/shared/access/ConfirmedOwner.sol";
 
-contract lottery is VRFConsumerBaseV2, ConfirmedOwner {
+contract lottery is VRFV2WrapperConsumerBase, ConfirmedOwner {
     event NewParticipant(address indexed newParticipant, bool isNewParticipant);
     event Winner(address indexed winnerAddress, bool isWinner);
     event Paused(address account);
@@ -15,41 +14,35 @@ contract lottery is VRFConsumerBaseV2, ConfirmedOwner {
 
 
     struct RequestStatus {
+        uint256 paid; 
         bool fulfilled;
         uint256 randomNumber;
     }
 
-    VRFCoordinatorV2Interface COORDINATOR;
-    bytes32 internal keyHash;
-    uint256 internal fee;
-    uint256 public randomResult;
-    uint32 callbackGasLimit = 2500000;
+    uint32 callbackGasLimit = 2000000;
     uint32 numNumber = 1;
     uint16 requestConfirmations = 3;
-    uint64 s_subscriptionId;
     mapping(uint256 => RequestStatus) public s_requests;
 
     address payable public ownerPayable;
-    uint256 public lotteryId = 0;
+    uint256 public lotteryId;
     mapping(address => mapping(uint256 => bool)) public hasParticipatedThisRound;
     mapping(uint256 => address) public indexToParticipant;
     uint256 public participantCount;
     address public lastWinner;
-    bool public paused = false;
+    bool public paused;
     bool private locked;
 
-    constructor(uint64 subscriptionId) 
-        VRFConsumerBaseV2(0x7a1BaC17Ccc5b313516C5E16fb24f7659aA5ebed)
+    address linkAddress = 0x326C977E6efc84E512bB9C30f76E30c160eD06FB;
+    address wrapperAddress = 0x99aFAf084eBA697E584501b8Ed2c0B37Dd136693;
+    uint256[] public requestIds;
+    uint256 public lastRequestId;
+
+    constructor()
         ConfirmedOwner(msg.sender)
+        VRFV2WrapperConsumerBase(linkAddress, wrapperAddress)
     {
-        COORDINATOR = VRFCoordinatorV2Interface(
-            0x7a1BaC17Ccc5b313516C5E16fb24f7659aA5ebed // VRF Coordinator for Mumbai
-        );
         ownerPayable = payable(msg.sender);
-        keyHash = 0x4b09e658ed251bcafeebbc69400383d49f344ace09b9576fe248bb02c003fe9f;
-        fee = 0.0005 * 10 ** 18; // Fee for Mumbai
-        s_subscriptionId = subscriptionId; // define subscription id
-        COORDINATOR = VRFCoordinatorV2Interface(0x7a1BaC17Ccc5b313516C5E16fb24f7659aA5ebed);
     }
 
     modifier whenNotPaused() {
@@ -96,30 +89,41 @@ contract lottery is VRFConsumerBaseV2, ConfirmedOwner {
     }
 
     // request random number to chainlink VRF
-    function requestRandomNumber() internal {
-        uint256 requestId = COORDINATOR.requestRandomWords(
-            keyHash, 
-            s_subscriptionId, 
-            requestConfirmations, // request confirmations
-            callbackGasLimit, // callback gas limit
-            numNumber // number of random numbers
+    function _requestRandomNumber() internal returns (uint256 requestId) {
+        requestId = requestRandomness(
+            callbackGasLimit,
+            requestConfirmations,
+            numNumber
         );
-        emit RandomNumberRequested(uint256(requestId));
+
+        s_requests[requestId] = RequestStatus({
+            paid: VRF_V2_WRAPPER.calculateRequestPrice(callbackGasLimit),
+            randomNumber: 0,
+            fulfilled: false
+        });
+        requestIds.push(requestId);
+        lastRequestId = requestId;
+
+        emit RandomNumberRequested(requestId);
     }
 
 
     function selectWinner() public onlyOwner hasParticipants hasEnoughBalance noReentrancy {
-        requestRandomNumber();
+        _requestRandomNumber();
     }
 
     // callback function call by chainlink to give here the random number
-    function fulfillRandomWords(uint256, uint256[] memory randomWords) internal override {
-        randomResult = randomWords[0];
-        emit RandomNumberFulfilled(randomResult);
-        processWinner(randomResult);
+    function fulfillRandomWords(uint256 _requestId, uint256[] memory randomWords) internal override {
+        require(s_requests[_requestId].paid > 0, "request not found");
+
+        s_requests[_requestId].fulfilled = true;
+        s_requests[_requestId].randomNumber = randomWords[0];
+        
+        emit RandomNumberFulfilled(randomWords[0]);
+        _processWinner(randomWords[0]);
     }
 
-    function processWinner(uint256 randomness) internal {
+    function _processWinner(uint256 randomness) internal {
         // Use randomness to determine the winner
         uint256 randomIndex = randomness % participantCount;
         address winnerAddress = indexToParticipant[randomIndex];
