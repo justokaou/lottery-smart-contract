@@ -76,7 +76,7 @@ After deploying the contract, users can interact with it by sending 0.1 ETH to p
 
 ## Authors
 
-- [@dyfault-eth](https://www.github.com/dyfault-eth)
+- **JustOkaou** - [GitHub Profile](https://github.com/justokaou)
 
 
 
