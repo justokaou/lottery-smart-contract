@@ -74,6 +74,10 @@ After deploying the contract, users can interact with it by sending 0.1 ETH to p
 
 - **Pause/Unpause the lottery**: The contract owner can pause or unpause the lottery using `pause()` and `unpause()` respectively.
 
+## 🛡️ License
+
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for more details.
+
 ## Authors
 
 - **JustOkaou** - [GitHub Profile](https://github.com/justokaou)
